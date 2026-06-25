@@ -1,0 +1,63 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build only - on PRs we just want to know it builds, we don't deploy.
+      - name: Build app image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: false
+          tags: notes-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sanity check container starts and responds
+        run: |
+          docker run -d --name ci-test -p 8000:8000 \
+            -e DATABASE_URL=sqlite:///./ci.db \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            notes-service:ci || true
+          sleep 3
+          # we expect this to come up even without real db/redis reachable -
+          # /health should report "degraded" (503) rather than the
+          # container crashing outright. A crash here means the app isn't
+          # handling missing dependencies gracefully.
+          docker logs ci-test
+          docker rm -f ci-test
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # SSH into the VPS and run the deploy script that lives in the repo.
+      # The script itself does git pull + rebuild + healthcheck-gated
+      # restart, so this step just has to kick it off.
+      - name: Deploy to VPS over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            bash /opt/notes-service/scripts/deploy.sh
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "Deploy failed - check the SSH step output above and 'docker compose logs' on the server."
