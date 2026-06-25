@@ -54,7 +54,7 @@ as `"ok"`, the stack is up.
   request flow
 
 ## Known limitations / what I'd do next with more time
-
+Testing my CI/CD pipeline!
 - Single app replica, so deploys have a few seconds of downtime while the
   container restarts. Documented the path to a 2-replica rolling deploy in
   `docs/deployment.md` but didn't implement it here since one VPS with one
